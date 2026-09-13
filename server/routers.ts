@@ -4,10 +4,12 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { invokeLLM, listLLMModels } from "./_core/llm";
+import { generateImage } from "./_core/imageGeneration";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { createIndexFromDirectory } from "./rag/ingest";
 import { answerFromKnowledge } from "./rag/rag";
+import { fetchNewsHeadlines } from "./news";
 import { getDomainContext } from "../shared/domainKnowledge";
 import { evaluationSummary } from "../shared/evaluationDataset";
 
@@ -43,6 +45,32 @@ export const appRouter = router({
   }),
   ai: router({
     evaluation: publicProcedure.query(() => evaluationSummary()),
+    newsBriefing: publicProcedure.input(z.object({ topic: z.string().trim().max(160).optional() }).optional()).mutation(async ({ input }) => {
+      const headlines = await fetchNewsHeadlines(8);
+      if (!headlines.length) throw new TRPCError({ code: "BAD_GATEWAY", message: "Sumber berita sedang tidak tersedia." });
+      const topic = input?.topic?.trim() || "berita dunia terbaru";
+      const evidence = headlines.map((item, index) => `[N${index + 1}] ${item.title}\n${item.description ?? ""}\nSumber: ${item.source} · ${item.link}`).join("\n\n");
+      const response = await invokeLLM({ messages: [{ role: "system", content: `Anda adalah Sahabat AI News Briefing. Rangkum ${topic} dalam bahasa Indonesia secara netral. Gunakan hanya headline dan deskripsi yang diberikan. Jangan menambah fakta yang tidak ada. Beri label jika informasi masih awal atau belum terverifikasi. Sertakan citation [N1], [N2].\n\n${evidence}` }, { role: "user", content: `Buat briefing singkat dari berita berikut tentang ${topic}.` }] });
+      const content = response.choices?.[0]?.message?.content;
+      if (typeof content !== "string" || !content.trim()) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Briefing berita kosong." });
+      return { content, headlines, model: response.model };
+    }),
+    generateImage: publicProcedure.input(z.object({ prompt: z.string().trim().min(3).max(2000) })).mutation(async ({ input }) => {
+      try {
+        const result = await generateImage({ prompt: input.prompt, quality: "medium" });
+        if (!result.url) throw new Error("Generated image URL is empty");
+        return { url: result.url };
+      } catch (error) {
+        console.error("[AI] Image generation failed:", error);
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Foto belum berhasil dibuat. Coba prompt lain sebentar lagi." });
+      }
+    }),
+    codeHelp: publicProcedure.input(z.object({ language: z.string().trim().max(80).default("auto"), code: z.string().max(16000), error: z.string().max(6000) })).mutation(async ({ input }) => {
+      const response = await invokeLLM({ messages: [{ role: "system", content: "Anda adalah Sahabat AI Coding Mentor. Bantu debugging secara aman dan praktis dalam bahasa Indonesia. Jelaskan akar masalah, berikan patch minimal, langkah pengujian, dan risiko. Jangan mengklaim telah menjalankan kode. Jangan meminta secrets. Jika error belum cukup jelas, sebutkan informasi yang kurang." }, { role: "user", content: `Bahasa: ${input.language}\nError: ${input.error}\nKode:\n${input.code}` }] });
+      const content = response.choices?.[0]?.message?.content;
+      if (typeof content !== "string" || !content.trim()) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Analisis coding kosong." });
+      return { content, model: response.model };
+    }),
     chat: publicProcedure.input(z.object({
       mode: modeSchema,
       domain: domainSchema.default("general"),
