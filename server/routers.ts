@@ -65,7 +65,7 @@ export const appRouter = router({
         throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Foto belum berhasil dibuat. Coba prompt lain sebentar lagi." });
       }
     }),
-    codeHelp: publicProcedure.input(z.object({ language: z.string().trim().max(80).default("auto"), code: z.string().max(16000), error: z.string().max(6000) })).mutation(async ({ input }) => {
+    codeHelp: publicProcedure.input(z.object({ language: z.string().trim().max(80).default("auto"), code: z.string().trim().min(1).max(16000), error: z.string().trim().min(1).max(6000) })).mutation(async ({ input }) => {
       const response = await invokeLLM({ messages: [{ role: "system", content: "Anda adalah Sahabat AI Coding Mentor. Bantu debugging secara aman dan praktis dalam bahasa Indonesia. Jelaskan akar masalah, berikan patch minimal, langkah pengujian, dan risiko. Jangan mengklaim telah menjalankan kode. Jangan meminta secrets. Jika error belum cukup jelas, sebutkan informasi yang kurang." }, { role: "user", content: `Bahasa: ${input.language}\nError: ${input.error}\nKode:\n${input.code}` }] });
       const content = response.choices?.[0]?.message?.content;
       if (typeof content !== "string" || !content.trim()) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Analisis coding kosong." });
