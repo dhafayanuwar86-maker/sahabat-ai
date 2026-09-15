@@ -3,7 +3,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
-import { invokeLLM, listLLMModels } from "./_core/llm";
+import { invokeLLM, isUsageExhaustedError, LLMUpstreamError, listLLMModels } from "./_core/llm";
 import { generateImage } from "./_core/imageGeneration";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
@@ -110,6 +110,12 @@ export const appRouter = router({
         return { content: `${content}${citation}`, model: response.model, domain: input.domain, sources: citations, grounded: ragResult.grounded };
       } catch (error) {
         console.error("[AI] Chat completion failed:", error);
+        if (isUsageExhaustedError(error)) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Kuota layanan AI sedang habis. Coba lagi setelah kuota diperbarui atau gunakan konektor/model lain." });
+        }
+        if (error instanceof LLMUpstreamError && error.status === 429) {
+          throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Layanan AI sedang menerima terlalu banyak permintaan. Tunggu sebentar lalu coba lagi." });
+        }
         throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Sahabat AI sedang mengalami kendala. Coba lagi sebentar." });
       }
     }),

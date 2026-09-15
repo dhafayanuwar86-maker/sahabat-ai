@@ -272,6 +272,25 @@ const RETRY_MAX_RETRIES = 4;
 const RETRY_BASE_DELAY_MS = 500;
 const RETRY_MAX_DELAY_MS = 30_000;
 
+export class LLMUpstreamError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly body: string,
+  ) {
+    super(message);
+    this.name = "LLMUpstreamError";
+  }
+}
+
+export const isRetryableStatus = (status: number) =>
+  status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+
+export const isUsageExhaustedError = (error: unknown) => {
+  if (!(error instanceof LLMUpstreamError)) return false;
+  return error.status === 412 && /usage\s+exhausted|quota|limit/i.test(error.body);
+};
+
 type FetchInit = NonNullable<Parameters<typeof fetch>[1]>;
 
 const sleep = (ms: number) =>
@@ -308,7 +327,7 @@ const fetchWithBackoff = async (
   for (let attempt = 0; attempt <= RETRY_MAX_RETRIES; attempt++) {
     try {
       const response = await fetch(url, init);
-      if (response.ok || attempt === RETRY_MAX_RETRIES) {
+      if (response.ok || !isRetryableStatus(response.status) || attempt === RETRY_MAX_RETRIES) {
         return response;
       }
 
@@ -412,8 +431,10 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(
-      `LLM invoke failed: ${response.status} ${response.statusText} – ${errorText}`
+    throw new LLMUpstreamError(
+      `LLM invoke failed: ${response.status} ${response.statusText}`,
+      response.status,
+      errorText,
     );
   }
 
@@ -445,8 +466,10 @@ export async function listLLMModels(): Promise<ModelsResponse> {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(
-      `List LLM models failed: ${response.status} ${response.statusText} – ${errorText}`
+    throw new LLMUpstreamError(
+      `List LLM models failed: ${response.status} ${response.statusText}`,
+      response.status,
+      errorText,
     );
   }
 
