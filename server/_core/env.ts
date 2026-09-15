@@ -7,4 +7,8 @@ export const ENV = {
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+  llmProvider: process.env.LLM_PROVIDER === "local" ? "local" : "forge",
+  localLlmBaseUrl: process.env.LOCAL_LLM_BASE_URL ?? "http://127.0.0.1:11434/v1",
+  localLlmApiKey: process.env.LOCAL_LLM_API_KEY ?? "",
+  localLlmModel: process.env.LOCAL_LLM_MODEL ?? "llama3.1:8b",
 };

@@ -3,7 +3,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
-import { invokeLLM, isUsageExhaustedError, LLMUpstreamError, listLLMModels } from "./_core/llm";
+import { invokeLLM, isLocalProvider, isUsageExhaustedError, LLMUpstreamError, listLLMModels } from "./_core/llm";
 import { generateImage } from "./_core/imageGeneration";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
@@ -15,7 +15,7 @@ import { evaluationSummary } from "../shared/evaluationDataset";
 
 const modeSchema = z.enum(["daily", "business", "marketing"]);
 const domainSchema = z.enum(["general", "medical", "space", "prehistory"]);
-const modelPreferenceSchema = z.enum(["auto", "claude-opus-4-7", "claude-opus-4-6", "gpt-5-mini"]);
+const modelPreferenceSchema = z.enum(["auto", "local", "claude-opus-4-7", "claude-opus-4-6", "gpt-5-mini"]);
 const chatMessageSchema = z.object({ role: z.enum(["user", "assistant"]), content: z.string().trim().min(1).max(12000) });
 const sourceSchema = z.object({ id: z.string().max(120).optional(), name: z.string().min(1).max(180), excerpt: z.string().min(1).max(9000), page: z.number().int().positive().optional(), chunk: z.number().int().positive().optional(), url: z.string().url().max(500).optional(), score: z.number().min(0).max(1).optional(), retrievalMethod: z.string().max(40).optional() });
 
@@ -80,9 +80,12 @@ export const appRouter = router({
       messages: z.array(chatMessageSchema).min(1).max(24),
     })).mutation(async ({ input }) => {
       try {
+        if (input.modelPreference === "local" && !isLocalProvider()) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Provider lokal belum diaktifkan. Set LLM_PROVIDER=local dan LOCAL_LLM_BASE_URL pada server terlebih dahulu." });
+        }
         const catalog = await listLLMModels();
         const available = catalog.data.map((model) => model.id);
-        const preferred = input.modelPreference === "auto" ? ["gpt-5-mini", "claude-opus-4-7", "claude-opus-4-6"] : [input.modelPreference, "gpt-5-mini", "claude-opus-4-7", "claude-opus-4-6"];
+        const preferred = input.modelPreference === "auto" ? ["gpt-5-mini", "claude-opus-4-7", "claude-opus-4-6"] : input.modelPreference === "local" ? ["local", "llama3.1:8b", "llama3.2:3b"] : [input.modelPreference, "gpt-5-mini", "claude-opus-4-7", "claude-opus-4-6"];
         const model = preferred.find((id) => available.includes(id)) ?? available[0];
         if (!model) throw new Error("No LLM model available");
 
@@ -110,6 +113,10 @@ export const appRouter = router({
         return { content: `${content}${citation}`, model: response.model, domain: input.domain, sources: citations, grounded: ragResult.grounded };
       } catch (error) {
         console.error("[AI] Chat completion failed:", error);
+        if (error instanceof TRPCError) throw error;
+        if (isLocalProvider() && !(error instanceof LLMUpstreamError)) {
+          throw new TRPCError({ code: "BAD_GATEWAY", message: "Provider AI lokal belum terhubung. Jalankan Ollama/vLLM dan pastikan LOCAL_LLM_BASE_URL dapat dijangkau server." });
+        }
         if (isUsageExhaustedError(error)) {
           throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Kuota layanan AI sedang habis. Coba lagi setelah kuota diperbarui atau gunakan konektor/model lain." });
         }

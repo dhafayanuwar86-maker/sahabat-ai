@@ -52,4 +52,15 @@ describe("ai.chat", () => {
       })
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
+
+  it("requires local provider configuration when local model is selected", async () => {
+    const caller = appRouter.createCaller(createContext());
+    await expect(
+      caller.ai.chat({
+        mode: "daily",
+        modelPreference: "local",
+        messages: [{ role: "user", content: "Halo" }],
+      })
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  });
 });

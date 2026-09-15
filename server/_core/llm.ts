@@ -212,15 +212,26 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
-const resolveApiUrl = () =>
-  ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
-    ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`
-    : "https://forge.manus.im/v1/chat/completions";
+export const isLocalProvider = () => ENV.llmProvider === "local";
+
+const resolveBaseUrl = () => {
+  if (isLocalProvider()) return ENV.localLlmBaseUrl.replace(/\/$/, "");
+  return ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
+    ? ENV.forgeApiUrl.replace(/\/$/, "")
+    : "https://forge.manus.im";
+};
+
+const resolveApiUrl = () => `${resolveBaseUrl()}/v1/chat/completions`;
 
 const assertApiKey = () => {
-  if (!ENV.forgeApiKey) {
+  if (!isLocalProvider() && !ENV.forgeApiKey) {
     throw new Error("OPENAI_API_KEY is not configured");
   }
+};
+
+const resolveAuthorization = (): Record<string, string> => {
+  const key = isLocalProvider() ? ENV.localLlmApiKey : ENV.forgeApiKey;
+  return key ? { authorization: `Bearer ${key}` } : {};
 };
 
 const normalizeResponseFormat = ({
@@ -424,7 +435,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${ENV.forgeApiKey}`,
+      ...resolveAuthorization(),
     },
     body: JSON.stringify(payload),
   });
@@ -456,12 +467,10 @@ export type ModelsResponse = {
 export async function listLLMModels(): Promise<ModelsResponse> {
   assertApiKey();
 
-  const url = ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
-    ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/models`
-    : "https://forge.manus.im/v1/models";
+  const url = `${resolveBaseUrl()}/v1/models`;
 
   const response = await fetchWithBackoff(url, {
-    headers: { authorization: `Bearer ${ENV.forgeApiKey}` },
+    headers: resolveAuthorization(),
   });
 
   if (!response.ok) {
